@@ -890,3 +890,105 @@ html, body {
 .remove-friend:hover {
   color: var(--danger) !important;
 }
+
+.sidebar-header #settings-btn {
+  min-width: 40px;
+  padding: 0.4rem;
+}
+
+.secondary-btn {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--header);
+  color: var(--text);
+  padding: 0.55rem 0.75rem;
+  cursor: pointer;
+}
+
+.secondary-btn:hover {
+  border-color: var(--accent);
+}
+
+.form-modal {
+  width: min(92vw, 420px);
+  max-height: 90vh;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.form-modal h3 {
+  text-align: center;
+  margin-bottom: 1.2rem;
+}
+
+.form-modal > label:not(.file-btn):not(.setting-toggle) {
+  display: block;
+  margin: 0.8rem 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.form-modal input[type="text"],
+.form-modal select {
+  display: block;
+  width: 100%;
+  margin-top: 0.35rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.form-modal .status-file-btn {
+  display: inline-block;
+  margin: 0.7rem 0;
+}
+
+.form-modal .modal-actions > button {
+  width: auto;
+  padding: 0.7rem 1rem;
+}
+
+.avatar-preview {
+  min-height: 0;
+  text-align: center;
+}
+
+.avatar-preview img {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--accent);
+}
+
+.setting-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 1rem 0;
+}
+
+.setting-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.avatar.has-picture {
+  background-size: cover;
+  background-position: center;
+}
+
+.message-sender {
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-bottom: 0.2rem;
+}
+
+.chat-actions .hidden {
+  display: none !important;
+}

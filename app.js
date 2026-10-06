@@ -2,6 +2,7 @@
 let peer = null;
 let myId = null;
 let myName = "";
+let myMemberId = loadMemberIdentity();
 let connections = {};
 let activePeerId = null;
 let mediaStream = null;
@@ -16,6 +17,11 @@ let typingTimeout = null;
 let myStatus = null; // { text, image, time, expires }
 let statuses = {};   // peerId -> status
 let friends = [];    // [{ id, name, peerId, lastSeen }]
+let groups = loadGroups();
+let appSettings = loadSettings();
+let currentGroupId = null;
+let groupPictureData = "";
+let editGroupPictureData = "";
 
 // ========== DOM ==========
 const loginScreen = document.getElementById("login-screen");
@@ -63,6 +69,10 @@ const backBtn = document.getElementById("back-btn");
 const sidebar = document.querySelector(".sidebar");
 const friendsList = document.getElementById("friends-list");
 const friendNameInput = document.getElementById("friend-name-input");
+const groupList = document.getElementById("group-list");
+const settingsBtn = document.getElementById("settings-btn");
+const newGroupBtn = document.getElementById("new-group-btn");
+const editChatBtn = document.getElementById("edit-chat-btn");
 
 // ========== Helpers ==========
 function getInitial(name) { return (name || "?").charAt(0).toUpperCase(); }
@@ -84,6 +94,7 @@ function escapeHtml(text) {
 }
 function isMobile() { return window.innerWidth <= 700; }
 function playNotificationSound() {
+  if (!appSettings.sounds) return;
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const osc = ctx.createOscillator();
@@ -101,8 +112,10 @@ joinBtn.addEventListener("click", startApp);
 usernameInput.addEventListener("keydown", e => { if (e.key === "Enter") startApp(); });
 
 function startApp() {
-  myName = usernameInput.value.trim() || "Anonymous";
+  myName = usernameInput.value.trim() || localStorage.getItem("saimasiya_name") || "Anonymous";
   if (!myName) return;
+  localStorage.setItem("saimasiya_name", myName);
+  applySettings();
   loginScreen.classList.add("hidden");
   app.classList.remove("hidden");
   myNameEl.textContent = myName;
@@ -118,9 +131,17 @@ function startApp() {
 
   peer.on("open", id => {
     myId = id;
+    const previousId = localStorage.getItem("saimasiya_peer_id");
+    localStorage.setItem("saimasiya_peer_id", id);
+    Object.values(groups).forEach(group => {
+      const self = group.members.find(member => member.memberId === myMemberId || (!member.memberId && member.peerId === previousId));
+      if (self) { self.peerId = myId; self.memberId = myMemberId; self.name = myName; }
+    });
+    saveGroups();
     myIdEl.textContent = id;
     myIdEl.title = id;
     renderStatusBar();
+    renderGroupList();
   });
   peer.on("connection", handleIncomingDataConnection);
   peer.on("call", handleIncomingCall);
@@ -143,17 +164,33 @@ connectBtn.addEventListener("click", () => {
 remoteIdInput.addEventListener("keydown", e => { if (e.key === "Enter") connectBtn.click(); });
 
 function connectToPeer(remoteId) {
-  if (connections[remoteId]) { switchToChat(remoteId); return; }
-  const conn = peer.connect(remoteId, { reliable: true });
-  setupDataConnection(conn, remoteId);
+  if (!connections[remoteId] || !connections[remoteId].conn.open) ensurePeerConnection(remoteId);
+  if (connections[remoteId] && connections[remoteId].conn.open) {
+    switchToChat(remoteId);
+  } else if (connections[remoteId]) {
+    connections[remoteId].openOnConnect = true;
+  }
+}
+
+function ensurePeerConnection(remoteId) {
+  if (!remoteId || remoteId === myId || !peer || peer.destroyed) return;
+  if (connections[remoteId] && (connections[remoteId].conn.open || connections[remoteId].connecting)) return;
+  const pending = connections[remoteId] && connections[remoteId].pending || [];
+  delete connections[remoteId];
+  setupDataConnection(peer.connect(remoteId, { reliable: true }), remoteId);
+  connections[remoteId].pending = pending;
 }
 
 function setupDataConnection(conn, displayName) {
   const peerId = conn.peer;
-  connections[peerId] = { conn, name: displayName, messages: [], typing: false };
+  const pending = connections[peerId] && connections[peerId].pending || [];
+  connections[peerId] = { conn, name: displayName, messages: [], typing: false, connecting: true };
+  connections[peerId].pending = pending;
 
   conn.on("open", () => {
-    conn.send({ type: "hello", name: myName });
+    if (!connections[peerId] || connections[peerId].conn !== conn) return;
+    connections[peerId].connecting = false;
+    conn.send({ type: "hello", name: myName, memberId: myMemberId });
     if (myStatus && myStatus.expires > Date.now()) {
       conn.send({ type: "status", status: myStatus });
     }
@@ -162,18 +199,27 @@ function setupDataConnection(conn, displayName) {
     if (history.length && connections[peerId].messages.length === 0) {
       connections[peerId].messages = history;
     }
+    sendGroupMetadataToPeer(peerId);
+    connections[peerId].pending.splice(0).forEach(packet => conn.send(packet));
     renderChatList();
+    renderGroupList();
     renderStatusBar();
     renderFriendsList();
-    switchToChat(peerId);
+    if (!currentGroupId || connections[peerId].openOnConnect) switchToChat(peerId);
+    connections[peerId].openOnConnect = false;
   });
   conn.on("data", data => handleData(peerId, data));
   conn.on("close", () => {
     if (connections[peerId]) {
+      if (connections[peerId].conn !== conn) return;
+      connections[peerId].connecting = false;
       connections[peerId].name = (connections[peerId].name || "").replace(" (offline)","") + " (offline)";
       renderChatList();
       if (activePeerId === peerId) peerStatusEl.textContent = "Disconnected";
     }
+  });
+  conn.on("error", () => {
+    if (connections[peerId] && connections[peerId].conn === conn) connections[peerId].connecting = false;
   });
 }
 
@@ -185,14 +231,23 @@ function handleData(peerId, data) {
   const chat = connections[peerId];
   if (!chat) return;
 
-  if (data.type === "hello") {
-    chat.name = data.name || peerId;
-    addFriend(peerId, chat.name);
+  if (data.type === "group-meta" && data.group) {
+    mergeGroupMetadata(data.group, peerId);
+  }
+  else if (data.type === "group-message" && data.groupId && data.message) {
+    receiveGroupMessage(peerId, data);
+  }
+  else if (data.type === "hello") {
+    const savedFriend = friends.find(friend => friend.peerId === peerId);
+    chat.name = savedFriend && savedFriend.customName ? savedFriend.name : (data.name || peerId);
+    chat.picture = savedFriend && savedFriend.picture || "";
+    addFriend(peerId, chat.name, data.memberId);
+    updateGroupMemberRoute(peerId, data.memberId, data.name);
     renderChatList();
     renderFriendsList();
     if (activePeerId === peerId) {
       peerNameEl.textContent = chat.name;
-      peerAvatar.textContent = getInitial(chat.name);
+      setAvatar(peerAvatar, chat.name, chat.picture);
     }
   }
   else if (data.type === "message") {
@@ -231,35 +286,84 @@ function renderChatList() {
     const preview = last ? (last.type === "file" ? "📎 " + last.name : last.text) : "New chat";
     const item = document.createElement("div");
     item.className = "chat-item" + (id === activePeerId ? " active" : "");
-    item.innerHTML = `<div class="avatar small">${getInitial(chat.name)}</div>
-      <div><div class="name">${escapeHtml(chat.name)}</div>
-      <div class="preview">${escapeHtml(preview)}</div></div>`;
+    const avatar = document.createElement("div");
+    avatar.className = "avatar small";
+    setAvatar(avatar, chat.name, chat.picture);
+    const info = document.createElement("div");
+    info.innerHTML = `<div class="name">${escapeHtml(chat.name)}</div><div class="preview">${escapeHtml(preview)}</div>`;
+    item.append(avatar, info);
     item.onclick = () => switchToChat(id);
     chatList.appendChild(item);
   });
 }
 
+function renderGroupList() {
+  if (!groupList) return;
+  groupList.innerHTML = "";
+  Object.values(groups).forEach(group => {
+    const last = group.messages[group.messages.length - 1];
+    const item = document.createElement("div");
+    item.className = "chat-item" + (currentGroupId === group.id ? " active" : "");
+    const avatar = document.createElement("div");
+    avatar.className = "avatar small";
+    setAvatar(avatar, group.name, group.picture);
+    const info = document.createElement("div");
+    info.innerHTML = `<div class="name">${escapeHtml(group.name)}</div><div class="preview">${escapeHtml(last ? (last.type === "file" ? "📎 " + last.name : last.text) : `${group.members.length} members`)}</div>`;
+    item.append(avatar, info);
+    item.onclick = () => switchToGroup(group.id);
+    groupList.appendChild(item);
+  });
+}
+
 function switchToChat(peerId) {
+  currentGroupId = null;
   activePeerId = peerId;
   const chat = connections[peerId];
   if (!chat) return;
   emptyState.classList.add("hidden");
   chatView.classList.remove("hidden");
   peerNameEl.textContent = chat.name;
-  peerAvatar.textContent = getInitial(chat.name);
+  setAvatar(peerAvatar, chat.name, chat.picture);
   peerStatusEl.textContent = chat.conn.open ? "Online" : "Offline";
+  editChatBtn.classList.remove("hidden");
+  voiceCallBtn.classList.remove("hidden");
+  videoCallBtn.classList.remove("hidden");
   chat.messages.forEach(m => { if (m.from === "in") m.status = "read"; });
   if (chat.conn.open) chat.conn.send({ type: "read" });
   typingIndicator.classList.toggle("hidden", !chat.typing);
   renderMessages();
   renderChatList();
+  renderGroupList();
+  messageInput.focus();
+  if (isMobile()) sidebar.classList.add("hidden-mobile");
+}
+
+function switchToGroup(groupId) {
+  const group = groups[groupId];
+  if (!group) return;
+  currentGroupId = groupId;
+  activePeerId = null;
+  emptyState.classList.add("hidden");
+  chatView.classList.remove("hidden");
+  peerNameEl.textContent = group.name;
+  setAvatar(peerAvatar, group.name, group.picture);
+  const online = group.members.filter(member => member.peerId !== myId && connections[member.peerId] && connections[member.peerId].conn.open).length;
+  peerStatusEl.textContent = `${group.members.length} members · ${online} online`;
+  editChatBtn.classList.remove("hidden");
+  voiceCallBtn.classList.add("hidden");
+  videoCallBtn.classList.add("hidden");
+  hangupBtn.classList.add("hidden");
+  typingIndicator.classList.add("hidden");
+  renderMessages();
+  renderGroupList();
   messageInput.focus();
   if (isMobile()) sidebar.classList.add("hidden-mobile");
 }
 
 function renderMessages() {
   messagesEl.innerHTML = "";
-  const chat = connections[activePeerId];
+  const group = currentGroupId && groups[currentGroupId];
+  const chat = group || connections[activePeerId];
   if (!chat) return;
   chat.messages.forEach(msg => {
     const div = document.createElement("div");
@@ -267,22 +371,24 @@ function renderMessages() {
     if (msg.type === "file") {
       div.classList.add("file");
       const isImg = msg.mime && msg.mime.startsWith("image/");
+      const sender = msg.senderName ? `<div class="message-sender">${escapeHtml(msg.senderName)}</div>` : "";
       if (isImg) {
-        div.innerHTML = `<img class="preview" src="${msg.data}" alt="${escapeHtml(msg.name)}"/>
-          <a href="${msg.data}" download="${escapeHtml(msg.name)}">${escapeHtml(msg.name)}</a>
-          <div class="time">${msg.time}</div>`;
+        div.innerHTML = `${sender}<img class="preview" src="${escapeHtml(msg.data)}" alt="${escapeHtml(msg.name)}"/>
+          <a href="${escapeHtml(msg.data)}" download="${escapeHtml(msg.name)}">${escapeHtml(msg.name)}</a>
+          <div class="time">${escapeHtml(msg.time)}</div>`;
       } else {
-        div.innerHTML = `<div class="file-icon">📄</div>
-          <a href="${msg.data}" download="${escapeHtml(msg.name)}">${escapeHtml(msg.name)}</a>
-          <div class="time">${msg.time} • ${formatBytes(msg.size)}</div>`;
+        div.innerHTML = `${sender}<div class="file-icon">📄</div>
+          <a href="${escapeHtml(msg.data)}" download="${escapeHtml(msg.name)}">${escapeHtml(msg.name)}</a>
+          <div class="time">${escapeHtml(msg.time)} • ${formatBytes(msg.size)}</div>`;
       }
     } else {
       let ticks = "";
       if (msg.from === "out") {
         ticks = msg.status === "read" ? '<span class="ticks read">✓✓</span>' : '<span class="ticks">✓</span>';
       }
-      div.innerHTML = `<div>${escapeHtml(msg.text)}</div><div class="time">${msg.time}${ticks}</div>`;
+      div.innerHTML = `${msg.senderName ? `<div class="message-sender">${escapeHtml(msg.senderName)}</div>` : ""}<div>${escapeHtml(msg.text)}</div><div class="time">${escapeHtml(msg.time)}${ticks}</div>`;
     }
+    if (msg.from === "in" && msg.senderName) div.dataset.sender = msg.senderName;
     messagesEl.appendChild(div);
   });
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -294,6 +400,229 @@ function addMessage(peerId, msg) {
   if (peerId === activePeerId) renderMessages();
   renderChatList();
   saveChatHistory(peerId);
+}
+
+function setAvatar(element, name, picture) {
+  const validPicture = isValidAvatar(picture) ? picture : "";
+  element.textContent = validPicture ? "" : getInitial(name);
+  element.style.backgroundImage = validPicture ? `url("${validPicture}")` : "";
+  element.classList.toggle("has-picture", !!validPicture);
+}
+
+function isValidAvatar(value) {
+  return typeof value === "string" && value.length < 400000 && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/i.test(value);
+}
+
+function sendToPeer(peerId, packet) {
+  const chat = connections[peerId];
+  if (chat && chat.conn.open) {
+    chat.conn.send(packet);
+    return;
+  }
+  ensurePeerConnection(peerId);
+  if (connections[peerId]) connections[peerId].pending.push(packet);
+}
+
+function sendGroupMetadataToPeer(peerId) {
+  Object.values(groups).forEach(group => {
+    if (group.members.some(member => member.peerId === peerId)) {
+      sendToPeer(peerId, { type: "group-meta", group: groupMetadata(group) });
+    }
+  });
+}
+
+function groupMetadata(group) {
+  return {
+    id: group.id,
+    name: group.name,
+    picture: group.picture || "",
+    members: group.members,
+    updatedAt: group.updatedAt || Date.now()
+  };
+}
+
+function sendGroupPacket(group, packet, exceptPeerId) {
+  group.members.forEach(member => {
+    if (member.memberId !== myMemberId && member.peerId !== myId && member.peerId !== exceptPeerId) sendToPeer(member.peerId, packet);
+  });
+}
+
+function mergeGroupMetadata(incoming, senderPeerId) {
+  if (typeof incoming.id !== "string" || incoming.id.length > 200 || typeof incoming.name !== "string" || !Array.isArray(incoming.members)) return;
+  const members = incoming.members.filter(member => member && typeof member.peerId === "string");
+  if (!members.some(member => member.memberId === myMemberId || member.peerId === myId) || !members.some(member => member.peerId === senderPeerId)) return;
+  const existing = groups[incoming.id];
+  const updatedAt = Number(incoming.updatedAt) || Date.now();
+  if (existing && updatedAt <= (existing.updatedAt || 0)) return;
+  groups[incoming.id] = {
+    id: incoming.id,
+    name: incoming.name.slice(0, 40) || "Group chat",
+    picture: isValidAvatar(incoming.picture) ? incoming.picture : "",
+    members: members.map(member => ({
+      peerId: member.memberId === myMemberId ? myId : member.peerId,
+      memberId: typeof member.memberId === "string" ? member.memberId : "",
+      name: String(member.name || member.peerId).slice(0, 40)
+    })),
+    messages: existing ? existing.messages : [],
+    updatedAt
+  };
+  saveGroups();
+  renderGroupList();
+  if (currentGroupId === incoming.id) switchToGroup(incoming.id);
+  members.forEach(member => {
+    if (member.peerId !== myId && member.peerId !== senderPeerId) {
+      sendToPeer(member.peerId, { type: "group-meta", group: groupMetadata(groups[incoming.id]) });
+    }
+  });
+}
+
+function updateGroupMemberRoute(peerId, memberId, name) {
+  if (!memberId) return;
+  let changed = false;
+  Object.values(groups).forEach(group => {
+    const member = group.members.find(item => item.memberId === memberId || item.peerId === peerId);
+    if (member && (member.peerId !== peerId || member.memberId !== memberId || member.name !== name)) {
+      member.peerId = peerId;
+      member.memberId = memberId;
+      member.name = name || member.name;
+      group.updatedAt = Math.max(Date.now(), (group.updatedAt || 0) + 1);
+      sendGroupPacket(group, { type: "group-meta", group: groupMetadata(group) });
+      changed = true;
+    }
+  });
+  if (changed) saveGroups();
+}
+
+function receiveGroupMessage(senderPeerId, packet) {
+  const group = groups[packet.groupId];
+  const message = packet.message;
+  if (!group || !group.members.some(member => member.peerId === senderPeerId) || !message.id) return;
+  if (group.messages.some(existing => existing.id === message.id)) return;
+  if (message.type === "message" && (typeof message.text !== "string" || message.text.length > 10000)) return;
+  if (message.type === "file" && (typeof message.name !== "string" || typeof message.data !== "string" || message.data.length > 21 * 1024 * 1024 || !/^data:[a-z0-9.+-]+\/[a-z0-9.+-]*;base64,[A-Za-z0-9+/]+=*$/i.test(message.data))) return;
+  if (message.type !== "message" && message.type !== "file") return;
+  const sender = group.members.find(member => member.peerId === senderPeerId);
+  const received = {
+    id: String(message.id).slice(0, 240),
+    type: message.type,
+    text: message.type === "message" ? message.text : undefined,
+    name: message.type === "file" ? message.name.slice(0, 255) : undefined,
+    size: message.type === "file" ? Number(message.size) || 0 : undefined,
+    mime: message.type === "file" ? String(message.mime || "") : undefined,
+    data: message.type === "file" ? message.data : undefined,
+    senderId: senderPeerId,
+    senderName: sender ? sender.name : "Member",
+    time: String(message.time || formatTime()).slice(0, 40),
+    from: "in"
+  };
+  group.messages.push(received);
+  group.messages = group.messages.slice(-200);
+  saveGroups();
+  renderGroupList();
+  if (currentGroupId === group.id) renderMessages();
+  else if (document.hidden || currentGroupId !== group.id) playNotificationSound();
+  sendGroupPacket(group, packet, senderPeerId);
+}
+
+function createGroup() {
+  const name = document.getElementById("group-name-input").value.trim();
+  const peerIds = parsePeerIds(document.getElementById("group-members-input").value);
+  if (!name) { alert("Enter a group name."); return; }
+  if (!myId) { alert("Wait for your Peer ID to connect, then create the group."); return; }
+  if (!peerIds.length) { alert("Enter at least one friend's Peer ID."); return; }
+  const members = [{ peerId: myId, memberId: myMemberId, name: myName }];
+  peerIds.forEach(peerId => {
+    const friend = friends.find(item => item.peerId === peerId);
+    members.push({ peerId, memberId: friend && friend.memberId || "", name: friend ? friend.name : peerId.slice(0, 8) });
+  });
+  const id = `${myId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const group = { id, name: name.slice(0, 40), picture: groupPictureData, members, messages: [], updatedAt: Date.now() };
+  groups[id] = group;
+  saveGroups();
+  document.getElementById("group-modal").classList.add("hidden");
+  document.getElementById("group-name-input").value = "";
+  document.getElementById("group-members-input").value = "";
+  groupPictureData = "";
+  document.getElementById("group-picture-preview").innerHTML = "";
+  sendGroupPacket(group, { type: "group-meta", group: groupMetadata(group) });
+  renderGroupList();
+  switchToGroup(id);
+}
+
+function parsePeerIds(value) {
+  return [...new Set(value.split(/[\s,;]+/).map(id => id.trim()).filter(id => id && id !== myId))];
+}
+
+function editCurrentGroup() {
+  const group = groups[currentGroupId];
+  const chat = activePeerId && connections[activePeerId];
+  if (!group && !chat) return;
+  document.getElementById("edit-chat-title").textContent = group ? "Edit group" : "Edit chat";
+  document.getElementById("edit-group-members-field").classList.toggle("hidden", !group);
+  document.getElementById("edit-group-name-input").value = group ? group.name : chat.name;
+  document.getElementById("edit-group-members-input").value = "";
+  const picture = group ? group.picture : chat.picture;
+  document.getElementById("edit-group-picture-preview").innerHTML = picture ? `<img src="${picture}" alt="Chat picture preview">` : "";
+  editGroupPictureData = picture || "";
+  document.getElementById("edit-chat-modal").classList.remove("hidden");
+}
+
+function saveCurrentGroup() {
+  const group = groups[currentGroupId];
+  const name = document.getElementById("edit-group-name-input").value.trim();
+  if (!name) { alert("Enter a group name."); return; }
+  if (!group) {
+    const chat = connections[activePeerId];
+    if (!chat) return;
+    chat.name = name.slice(0, 40);
+    chat.picture = editGroupPictureData;
+    const friend = friends.find(item => item.peerId === activePeerId);
+    if (friend) {
+      friend.name = chat.name;
+      friend.picture = chat.picture;
+      friend.customName = true;
+      saveFriends();
+    }
+    document.getElementById("edit-chat-modal").classList.add("hidden");
+    switchToChat(activePeerId);
+    return;
+  }
+  parsePeerIds(document.getElementById("edit-group-members-input").value).forEach(peerId => {
+    if (!group.members.some(member => member.peerId === peerId || (friend && friend.memberId && member.memberId === friend.memberId))) {
+      const friend = friends.find(item => item.peerId === peerId);
+      group.members.push({ peerId, memberId: friend && friend.memberId || "", name: friend ? friend.name : peerId.slice(0, 8) });
+    }
+  });
+  group.name = name.slice(0, 40);
+  group.picture = editGroupPictureData;
+  group.updatedAt = Math.max(Date.now(), (group.updatedAt || 0) + 1);
+  saveGroups();
+  sendGroupPacket(group, { type: "group-meta", group: groupMetadata(group) });
+  document.getElementById("edit-chat-modal").classList.add("hidden");
+  switchToGroup(group.id);
+}
+
+function readGroupPicture(file, previewId, updateValue) {
+  if (!file) return;
+  if (!file.type.startsWith("image/")) { alert("Choose an image file."); return; }
+  const reader = new FileReader();
+  reader.onerror = () => alert("Could not read that image.");
+  reader.onload = () => {
+    const image = new Image();
+    image.onerror = () => alert("Could not open that image.");
+    image.onload = () => {
+      const scale = Math.min(1, 256 / Math.max(image.width, image.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+      const data = canvas.toDataURL("image/jpeg", 0.82);
+      updateValue(data);
+      document.getElementById(previewId).innerHTML = `<img src="${data}" alt="Group picture preview">`;
+    };
+    image.src = reader.result;
+  };
+  reader.readAsDataURL(file);
 }
 
 // ========== Send + Typing ==========
@@ -312,7 +641,21 @@ messageInput.addEventListener("input", () => {
 
 function sendMessage() {
   const text = messageInput.value.trim();
-  if (!text || !activePeerId) return;
+  if (!text) return;
+  if (currentGroupId) {
+    const group = groups[currentGroupId];
+    if (!group) return;
+    const message = { id: `${myId}-${Date.now()}-${Math.random().toString(36).slice(2)}`, type: "message", text, time: formatTime(), senderId: myId, senderName: myName, from: "out" };
+    group.messages.push(message);
+    group.messages = group.messages.slice(-200);
+    saveGroups();
+    sendGroupPacket(group, { type: "group-message", groupId: group.id, message });
+    messageInput.value = "";
+    renderMessages();
+    renderGroupList();
+    return;
+  }
+  if (!activePeerId) return;
   const chat = connections[activePeerId];
   if (!chat || !chat.conn.open) return;
   const msg = { type: "message", text, time: formatTime(), id: Date.now() };
@@ -325,8 +668,24 @@ function sendMessage() {
 // ========== Files ==========
 fileInput.addEventListener("change", e => {
   const file = e.target.files[0];
-  if (!file || !activePeerId) return;
+  if (!file || (!activePeerId && !currentGroupId)) return;
   if (file.size > 15 * 1024 * 1024) { alert("Max 15 MB"); return; }
+  if (currentGroupId) {
+    const group = groups[currentGroupId];
+    const reader = new FileReader();
+    reader.onload = () => {
+      const message = { id: `${myId}-${Date.now()}-${Math.random().toString(36).slice(2)}`, type: "file", name: file.name, size: file.size, mime: file.type, data: reader.result, time: formatTime(), senderId: myId, senderName: myName, from: "out" };
+      group.messages.push(message);
+      group.messages = group.messages.slice(-200);
+      saveGroups();
+      sendGroupPacket(group, { type: "group-message", groupId: group.id, message });
+      renderMessages();
+      renderGroupList();
+    };
+    reader.readAsDataURL(file);
+    fileInput.value = "";
+    return;
+  }
   const chat = connections[activePeerId];
   if (!chat || !chat.conn.open) return;
   const reader = new FileReader();
@@ -623,12 +982,26 @@ if (logoutBtn) logoutBtn.addEventListener("click", () => {
   location.reload();
 });
 
+if (settingsBtn) settingsBtn.addEventListener("click", openSettings);
+if (newGroupBtn) newGroupBtn.addEventListener("click", () => document.getElementById("group-modal").classList.remove("hidden"));
+if (document.getElementById("create-group-btn")) document.getElementById("create-group-btn").addEventListener("click", createGroup);
+if (document.getElementById("cancel-group-btn")) document.getElementById("cancel-group-btn").addEventListener("click", () => document.getElementById("group-modal").classList.add("hidden"));
+if (editChatBtn) editChatBtn.addEventListener("click", editCurrentGroup);
+if (document.getElementById("save-group-btn")) document.getElementById("save-group-btn").addEventListener("click", saveCurrentGroup);
+if (document.getElementById("cancel-edit-chat-btn")) document.getElementById("cancel-edit-chat-btn").addEventListener("click", () => document.getElementById("edit-chat-modal").classList.add("hidden"));
+if (document.getElementById("group-picture-input")) document.getElementById("group-picture-input").addEventListener("change", event => readGroupPicture(event.target.files[0], "group-picture-preview", value => groupPictureData = value));
+if (document.getElementById("edit-group-picture-input")) document.getElementById("edit-group-picture-input").addEventListener("change", event => readGroupPicture(event.target.files[0], "edit-group-picture-preview", value => editGroupPictureData = value));
+if (document.getElementById("save-settings-btn")) document.getElementById("save-settings-btn").addEventListener("click", saveSettings);
+if (document.getElementById("cancel-settings-btn")) document.getElementById("cancel-settings-btn").addEventListener("click", () => document.getElementById("settings-modal").classList.add("hidden"));
+
 if (backBtn) backBtn.addEventListener("click", () => {
   chatView.classList.add("hidden");
   emptyState.classList.remove("hidden");
   if (isMobile()) sidebar.classList.remove("hidden-mobile");
   activePeerId = null;
+  currentGroupId = null;
   renderChatList();
+  renderGroupList();
 });
 
 messagesEl.addEventListener("click", e => {
@@ -645,6 +1018,101 @@ if ("serviceWorker" in navigator) {
 }
 
 // ========== FRIENDS SYSTEM (localStorage) ==========
+function loadGroups() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("saimasiya_groups") || "{}");
+    if (!saved || typeof saved !== "object" || Array.isArray(saved)) return {};
+    return Object.fromEntries(Object.entries(saved)
+      .filter(([id, group]) => group && group.id === id && Array.isArray(group.members))
+      .map(([id, group]) => [id, {
+        ...group,
+        name: String(group.name || "Group chat").slice(0, 40),
+        picture: isValidAvatar(group.picture) ? group.picture : "",
+        messages: Array.isArray(group.messages) ? group.messages.slice(-200) : []
+      }]));
+  } catch {
+    return {};
+  }
+}
+
+function saveGroups() {
+  try {
+    localStorage.setItem("saimasiya_groups", JSON.stringify(groups));
+  } catch (error) {
+    console.error("Could not save group chats", error);
+    alert("Could not save group chats. Your device storage may be full.");
+  }
+}
+
+function loadSettings() {
+  try {
+    const settings = JSON.parse(localStorage.getItem("saimasiya_settings") || "{}");
+    return {
+      theme: ["green", "blue", "purple"].includes(settings.theme) ? settings.theme : "green",
+      sounds: settings.sounds !== false
+    };
+  } catch {
+    return { theme: "green", sounds: true };
+  }
+}
+
+function loadMemberIdentity() {
+  let memberId = localStorage.getItem("saimasiya_member_id");
+  if (!memberId) {
+    memberId = `member-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem("saimasiya_member_id", memberId);
+  }
+  return memberId;
+}
+
+function applySettings() {
+  const themes = {
+    green: { accent: "#00a884", bubble: "#005c4b" },
+    blue: { accent: "#4c9aff", bubble: "#174b78" },
+    purple: { accent: "#b388ff", bubble: "#553584" }
+  };
+  const theme = themes[appSettings.theme] || themes.green;
+  document.documentElement.style.setProperty("--accent", theme.accent);
+  document.documentElement.style.setProperty("--bubble-out", theme.bubble);
+  document.querySelector('meta[name="theme-color"]').content = theme.accent;
+}
+
+function openSettings() {
+  document.getElementById("settings-name-input").value = myName || localStorage.getItem("saimasiya_name") || "";
+  document.getElementById("settings-theme-input").value = appSettings.theme;
+  document.getElementById("settings-sounds-input").checked = appSettings.sounds;
+  document.getElementById("settings-modal").classList.remove("hidden");
+}
+
+function saveSettings() {
+  const name = document.getElementById("settings-name-input").value.trim();
+  if (!name) { alert("Enter your display name."); return; }
+  myName = name.slice(0, 20);
+  appSettings = {
+    theme: document.getElementById("settings-theme-input").value,
+    sounds: document.getElementById("settings-sounds-input").checked
+  };
+  localStorage.setItem("saimasiya_name", myName);
+  localStorage.setItem("saimasiya_settings", JSON.stringify(appSettings));
+  applySettings();
+  usernameInput.value = myName;
+  myNameEl.textContent = myName;
+  myAvatar.textContent = getInitial(myName);
+  if (peer) {
+    Object.values(connections).forEach(chat => {
+      if (chat.conn.open) chat.conn.send({ type: "hello", name: myName, memberId: myMemberId });
+    });
+    Object.values(groups).forEach(group => {
+      const self = group.members.find(member => member.memberId === myMemberId || member.peerId === myId);
+      if (self) self.name = myName;
+      group.updatedAt = Math.max(Date.now(), (group.updatedAt || 0) + 1);
+      sendGroupPacket(group, { type: "group-meta", group: groupMetadata(group) });
+    });
+    saveGroups();
+  }
+  document.getElementById("settings-modal").classList.add("hidden");
+}
+
 function loadFriends() {
   try {
     friends = JSON.parse(localStorage.getItem("saimasiya_friends") || "[]");
@@ -658,16 +1126,18 @@ function saveFriends() {
   localStorage.setItem("saimasiya_friends", JSON.stringify(friends));
 }
 
-function addFriend(peerId, name) {
+function addFriend(peerId, name, memberId) {
   if (!peerId || peerId === myId) return;
   const existing = friends.find(f => f.peerId === peerId);
   if (existing) {
-    existing.name = name || existing.name;
+    if (!existing.customName) existing.name = name || existing.name;
+    if (memberId) existing.memberId = memberId;
     existing.lastSeen = Date.now();
   } else {
     friends.push({
       id: Date.now().toString(),
       peerId,
+      memberId: memberId || "",
       name: name || peerId.slice(0, 8),
       lastSeen: Date.now()
     });
@@ -693,18 +1163,27 @@ function renderFriendsList() {
     const isOnline = !!connections[f.peerId] && connections[f.peerId].conn && connections[f.peerId].conn.open;
     const item = document.createElement("div");
     item.className = "chat-item";
-    item.innerHTML = `
-      <div class="avatar small">${getInitial(f.name)}</div>
-      <span class="${isOnline ? "online-dot" : "offline-dot"}"></span>
-      <div style="flex:1;min-width:0;">
-        <div class="name">${escapeHtml(f.name)}</div>
-        <div class="preview">${isOnline ? "Online" : "Offline"}</div>
-      </div>
-      <div class="friend-actions">
-        <button title="Chat" onclick="event.stopPropagation(); connectToPeer('${f.peerId}')">💬</button>
-        <button class="remove-friend" title="Remove" onclick="event.stopPropagation(); removeFriend('${f.peerId}')">✕</button>
-      </div>
-    `;
+    const avatar = document.createElement("div");
+    avatar.className = "avatar small";
+    setAvatar(avatar, f.name, f.picture);
+    const dot = document.createElement("span");
+    dot.className = isOnline ? "online-dot" : "offline-dot";
+    const info = document.createElement("div");
+    info.style.cssText = "flex:1;min-width:0;";
+    info.innerHTML = `<div class="name">${escapeHtml(f.name)}</div><div class="preview">${isOnline ? "Online" : "Offline"}</div>`;
+    const actions = document.createElement("div");
+    actions.className = "friend-actions";
+    const chatButton = document.createElement("button");
+    chatButton.title = "Chat";
+    chatButton.textContent = "💬";
+    chatButton.onclick = event => { event.stopPropagation(); connectToPeer(f.peerId); };
+    const removeButton = document.createElement("button");
+    removeButton.className = "remove-friend";
+    removeButton.title = "Remove";
+    removeButton.textContent = "✕";
+    removeButton.onclick = event => { event.stopPropagation(); removeFriend(f.peerId); };
+    actions.append(chatButton, removeButton);
+    item.append(avatar, dot, info, actions);
     item.onclick = () => connectToPeer(f.peerId);
     friendsList.appendChild(item);
   });

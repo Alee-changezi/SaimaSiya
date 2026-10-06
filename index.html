@@ -43,12 +43,14 @@
           </div>
         </div>
         <button id="copy-id-btn" title="Copy my Peer ID">📋</button>
+        <button id="settings-btn" class="icon-btn" title="Settings">⚙️</button>
       </div>
 
       <div class="connect-box">
         <input type="text" id="remote-id-input" placeholder="Friend's Peer ID" />
         <input type="text" id="friend-name-input" placeholder="Name (optional)" maxlength="20" />
         <button id="connect-btn" class="primary-btn small">Add & Connect</button>
+        <button id="new-group-btn" class="secondary-btn">＋ New group</button>
       </div>
 
       <!-- Status / Stories bar -->
@@ -57,6 +59,9 @@
 
       <div class="section-title">Friends</div>
       <div id="friends-list" class="chat-list friends-list"></div>
+
+      <div class="section-title">Group chats</div>
+      <div id="group-list" class="chat-list"></div>
 
       <div class="section-title">Active Chats</div>
       <div id="chat-list" class="chat-list">
@@ -87,6 +92,7 @@
             </div>
           </div>
           <div class="chat-actions">
+            <button id="edit-chat-btn" class="icon-btn hidden" title="Edit chat name, picture, or members">✏️</button>
             <button id="voice-call-btn" class="icon-btn" title="Voice Call">📞</button>
             <button id="video-call-btn" class="icon-btn" title="Video Call">📹</button>
             <button id="hangup-btn" class="icon-btn hidden" title="End Call">📵</button>
@@ -127,6 +133,53 @@
         </footer>
       </div>
     </main>
+  </div>
+
+  <div id="group-modal" class="modal hidden">
+    <div class="modal-content form-modal">
+      <h3>Create a group</h3>
+      <label>Group name<input id="group-name-input" type="text" maxlength="40" placeholder="Weekend plans" /></label>
+      <label>Friend Peer IDs, separated by commas<input id="group-members-input" type="text" placeholder="Paste one or more Peer IDs" /></label>
+      <label class="file-btn status-file-btn">🖼️ Add group picture<input id="group-picture-input" type="file" accept="image/*" hidden /></label>
+      <div id="group-picture-preview" class="avatar-preview"></div>
+      <div class="modal-actions">
+        <button id="create-group-btn" class="primary-btn">Create group</button>
+        <button id="cancel-group-btn" class="danger-btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="edit-chat-modal" class="modal hidden">
+    <div class="modal-content form-modal">
+      <h3 id="edit-chat-title">Edit chat</h3>
+      <label>Chat name<input id="edit-group-name-input" type="text" maxlength="40" /></label>
+      <label id="edit-group-members-field">Add members by Peer ID<input id="edit-group-members-input" type="text" placeholder="Paste Peer IDs separated by commas" /></label>
+      <label class="file-btn status-file-btn">🖼️ Change group picture<input id="edit-group-picture-input" type="file" accept="image/*" hidden /></label>
+      <div id="edit-group-picture-preview" class="avatar-preview"></div>
+      <div class="modal-actions">
+        <button id="save-group-btn" class="primary-btn">Save changes</button>
+        <button id="cancel-edit-chat-btn" class="danger-btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="settings-modal" class="modal hidden">
+    <div class="modal-content form-modal">
+      <h3>Settings</h3>
+      <label>Your display name<input id="settings-name-input" type="text" maxlength="20" /></label>
+      <label>Accent color
+        <select id="settings-theme-input">
+          <option value="green">Green</option>
+          <option value="blue">Blue</option>
+          <option value="purple">Purple</option>
+        </select>
+      </label>
+      <label class="setting-toggle"><input id="settings-sounds-input" type="checkbox" /> Play notification sounds</label>
+      <div class="modal-actions">
+        <button id="save-settings-btn" class="primary-btn">Save settings</button>
+        <button id="cancel-settings-btn" class="danger-btn">Cancel</button>
+      </div>
+    </div>
   </div>
 
   <!-- Incoming Call Modal -->
