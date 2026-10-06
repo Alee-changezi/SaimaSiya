@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#00a884" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Saima Siya" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="description" content="Messages, Files, Voice & Video Calls, Status" />
+  <title>Saima Siya</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
+  <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+<body>
+  <!-- Login Screen -->
+  <div id="login-screen" class="screen">
+    <div class="login-card">
+      <div class="logo">💬</div>
+      <h1>Saima Siya</h1>
+      <p class="subtitle">Messages • Files • Voice & Video • Status</p>
+      <input type="text" id="username-input" placeholder="Enter your name" maxlength="20" autofocus />
+      <button id="join-btn" class="primary-btn">Join</button>
+      <p class="hint">Works peer-to-peer. Share your ID with friends to chat.</p>
+    </div>
+  </div>
+
+  <!-- Main App -->
+  <div id="app" class="screen hidden">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="user-info">
+          <div class="avatar" id="my-avatar">?</div>
+          <div>
+            <div class="my-name" id="my-name">User</div>
+            <div class="my-id" id="my-id">Connecting…</div>
+          </div>
+        </div>
+        <button id="copy-id-btn" title="Copy my Peer ID">📋</button>
+      </div>
+
+      <div class="connect-box">
+        <input type="text" id="remote-id-input" placeholder="Friend's Peer ID" />
+        <input type="text" id="friend-name-input" placeholder="Name (optional)" maxlength="20" />
+        <button id="connect-btn" class="primary-btn small">Add & Connect</button>
+      </div>
+
+      <!-- Status / Stories bar -->
+      <div class="section-title">Status</div>
+      <div id="status-bar" class="status-bar"></div>
+
+      <div class="section-title">Friends</div>
+      <div id="friends-list" class="chat-list friends-list"></div>
+
+      <div class="section-title">Active Chats</div>
+      <div id="chat-list" class="chat-list">
+        <!-- Dynamic peer chats appear here -->
+      </div>
+
+      <div class="sidebar-footer">
+        <button id="logout-btn" class="text-btn">Leave</button>
+      </div>
+    </aside>
+
+    <!-- Chat Area -->
+    <main class="chat-area">
+      <div id="empty-state" class="empty-state">
+        <div class="empty-icon">💬</div>
+        <h2>Start chatting</h2>
+        <p>Share your Peer ID with friends to start messaging, calling Share your Peer ID with a friend and connect to them. sharing status.</p>
+      </div>
+
+      <div id="chat-view" class="chat-view hidden">
+        <header class="chat-header">
+          <button id="back-btn" class="icon-btn back-btn" title="Back">←</button>
+          <div class="chat-peer-info">
+            <div class="avatar small" id="peer-avatar">?</div>
+            <div>
+              <div class="peer-name" id="peer-name">Peer</div>
+              <div class="peer-status" id="peer-status">Connecting…</div>
+            </div>
+          </div>
+          <div class="chat-actions">
+            <button id="voice-call-btn" class="icon-btn" title="Voice Call">📞</button>
+            <button id="video-call-btn" class="icon-btn" title="Video Call">📹</button>
+            <button id="hangup-btn" class="icon-btn hidden" title="End Call">📵</button>
+          </div>
+        </header>
+
+        <div id="messages" class="messages"></div>
+
+        <!-- Call overlay -->
+        <div id="call-overlay" class="call-overlay hidden">
+          <video id="remote-video" class="remote-video" autoplay playsinline></video>
+          <video id="local-video" class="local-video" autoplay playsinline muted></video>
+          <div class="call-info" id="call-info-panel">
+            <div class="call-avatar" id="call-avatar">?</div>
+            <div class="call-name" id="call-name">Peer</div>
+            <div class="call-status" id="call-status">Calling…</div>
+            <div class="call-timer" id="call-timer">00:00</div>
+          </div>
+          <div class="call-controls">
+            <button id="mute-btn" class="call-btn">🔇</button>
+            <button id="camera-btn" class="call-btn">📷</button>
+            <button id="end-call-btn" class="call-btn end">📵</button>
+          </div>
+        </div>
+        
+        <!-- Typing indicator -->
+        <div id="typing-indicator" class="typing-indicator hidden">
+          <span></span><span></span><span></span>
+        </div>
+
+        <footer class="chat-footer">
+          <label class="file-btn" title="Send file">
+            📎
+            <input type="file" id="file-input" hidden />
+          </label>
+          <input type="text" id="message-input" placeholder="Type a message…" autocomplete="off" />
+          <button id="send-btn" class="icon-btn send">➤</button>
+        </footer>
+      </div>
+    </main>
+  </div>
+
+  <!-- Incoming Call Modal -->
+  <div id="incoming-call" class="modal hidden">
+    <div class="modal-content">
+      <div class="incoming-avatar" id="incoming-avatar">?</div>
+      <h3 id="incoming-name">Incoming Call</h3>
+      <p id="incoming-type">Voice call…</p>
+      <div class="modal-actions">
+        <button id="accept-call" class="primary-btn">Accept</button>
+        <button id="reject-call" class="danger-btn">Reject</button>
+      </div>
+    </div>
+  </div>
+
+  
+  <!-- Status Creator Modal -->
+  <div id="status-modal" class="modal hidden">
+    <div class="modal-content status-modal-content">
+      <h3>Create Status</h3>
+      <textarea id="status-text" placeholder="What's on your mind?" rows="3"></textarea>
+      <div id="status-preview" class="status-preview"></div>
+      <label class="file-btn status-file-btn">📷 Add Image
+        <input type="file" id="status-file" accept="image/*" hidden />
+      </label>
+      <div class="modal-actions">
+        <button onclick="postStatus()" class="primary-btn">Post Status</button>
+        <button onclick="closeStatusCreator()" class="danger-btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status Viewer -->
+  <div id="status-viewer" class="modal hidden" onclick="closeStatusViewer()">
+    <div class="status-viewer-inner" onclick="event.stopPropagation()">
+      <button class="status-close" onclick="closeStatusViewer()">✕</button>
+      <div id="status-viewer-content"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
