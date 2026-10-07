@@ -24,9 +24,8 @@
       <div class="logo">💬</div>
       <h1>Saima Siya</h1>
       <p class="subtitle">Messages • Files • Voice & Video • Status</p>
-      <input type="text" id="username-input" placeholder="Enter your name" maxlength="20" autofocus />
-      <button id="join-btn" class="primary-btn">Join</button>
-      <p class="hint">Works peer-to-peer. Share your ID with friends to chat.</p>
+      <button id="join-btn" class="primary-btn">Enter</button>
+      <p class="hint">Private peer-to-peer messaging. Set your display name and profile picture in Settings.</p>
     </div>
   </div>
 
@@ -78,7 +77,7 @@
       <div id="empty-state" class="empty-state">
         <div class="empty-icon">💬</div>
         <h2>Start chatting</h2>
-        <p>Share your Peer ID with friends to start messaging, calling Share your Peer ID with a friend and connect to them. sharing status.</p>
+        <p>Share your Peer ID with a friend to connect and start messaging, calling, and sharing status.</p>
       </div>
 
       <div id="chat-view" class="chat-view hidden">
@@ -167,13 +166,16 @@
     <div class="modal-content form-modal">
       <h3>Settings</h3>
       <label>Your display name<input id="settings-name-input" type="text" maxlength="20" /></label>
-      <label>Accent color
-        <select id="settings-theme-input">
-          <option value="green">Green</option>
-          <option value="blue">Blue</option>
-          <option value="purple">Purple</option>
+      <label>Chat color<input id="settings-color-input" type="color" /></label>
+      <label>Appearance
+        <select id="settings-mode-input">
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
         </select>
       </label>
+      <label class="file-btn status-file-btn">🖼️ Change profile picture<input id="settings-picture-input" type="file" accept="image/*" hidden /></label>
+      <div id="settings-picture-preview" class="avatar-preview"></div>
+      <button id="remove-profile-picture-btn" class="secondary-btn" type="button">Remove profile picture</button>
       <label class="setting-toggle"><input id="settings-sounds-input" type="checkbox" /> Play notification sounds</label>
       <div class="modal-actions">
         <button id="save-settings-btn" class="primary-btn">Save settings</button>

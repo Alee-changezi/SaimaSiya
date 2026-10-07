@@ -12,6 +12,17 @@
   --border: #2a3942;
 }
 
+:root[data-mode="light"] {
+  --bg: #f4f7f8;
+  --sidebar: #ffffff;
+  --chat-bg: #eef3f5;
+  --header: #e5ecef;
+  --bubble-in: #ffffff;
+  --text: #18252b;
+  --text-muted: #5f717a;
+  --border: #d3dee3;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -41,6 +52,10 @@ body {
   background: linear-gradient(135deg, #0b141a 0%, #1a2a32 100%);
 }
 
+:root[data-mode="light"] #login-screen {
+  background: linear-gradient(135deg, #f4f7f8 0%, #dce9ed 100%);
+}
+
 .login-card {
   background: var(--sidebar);
   padding: 2.5rem;
@@ -65,22 +80,6 @@ body {
   color: var(--text-muted);
   font-size: 0.9rem;
   margin-bottom: 1.8rem;
-}
-
-#username-input {
-  width: 100%;
-  padding: 0.9rem 1rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--text);
-  font-size: 1rem;
-  margin-bottom: 1rem;
-  outline: none;
-}
-
-#username-input:focus {
-  border-color: var(--accent);
 }
 
 .primary-btn {
@@ -257,6 +256,10 @@ body {
 .empty-icon { font-size: 4rem; margin-bottom: 1rem; opacity: 0.5; }
 .empty-state h2 { color: var(--text); margin-bottom: 0.5rem; }
 
+:root[data-mode="light"] .chat-area {
+  background-image: none;
+}
+
 .chat-view {
   flex: 1;
   display: flex;
@@ -326,6 +329,7 @@ body {
 .message.out {
   align-self: flex-end;
   background: var(--bubble-out);
+  color: #fff;
   border-bottom-right-radius: 2px;
 }
 
@@ -340,6 +344,10 @@ body {
   color: rgba(255,255,255,0.55);
   margin-top: 0.2rem;
   text-align: right;
+}
+
+.message.out .time {
+  color: rgba(255,255,255,0.75);
 }
 
 .message.file {
@@ -588,6 +596,7 @@ html, body {
 
 .call-overlay {
   background: #000;
+  color: #fff;
 }
 
 .call-info {
@@ -595,6 +604,8 @@ html, body {
   z-index: 4;
   text-shadow: 0 2px 8px rgba(0,0,0,0.8);
 }
+
+.call-status { color: rgba(255,255,255,0.75); }
 
 .call-controls {
   position: relative;
@@ -610,6 +621,7 @@ html, body {
   justify-content: center;
   font-size: 1.3rem;
   padding: 0;
+  color: #fff;
 }
 
 .call-btn.end {
@@ -941,6 +953,18 @@ html, body {
   font-size: 0.95rem;
 }
 
+.form-modal input[type="color"] {
+  display: block;
+  width: 100%;
+  height: 44px;
+  margin-top: 0.35rem;
+  padding: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  cursor: pointer;
+}
+
 .form-modal .status-file-btn {
   display: inline-block;
   margin: 0.7rem 0;
@@ -977,7 +1001,18 @@ html, body {
   accent-color: var(--accent);
 }
 
+.form-modal > .secondary-btn {
+  width: 100%;
+  margin: 0.25rem 0 0.5rem;
+}
+
 .avatar.has-picture {
+  background-size: cover;
+  background-position: center;
+}
+
+.incoming-avatar.has-picture,
+.call-avatar.has-picture {
   background-size: cover;
   background-position: center;
 }

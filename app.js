@@ -19,6 +19,8 @@ let statuses = {};   // peerId -> status
 let friends = [];    // [{ id, name, peerId, lastSeen }]
 let groups = loadGroups();
 let appSettings = loadSettings();
+let myPicture = appSettings.picture;
+let profilePictureDraft = myPicture;
 let currentGroupId = null;
 let groupPictureData = "";
 let editGroupPictureData = "";
@@ -26,8 +28,8 @@ let editGroupPictureData = "";
 // ========== DOM ==========
 const loginScreen = document.getElementById("login-screen");
 const app = document.getElementById("app");
-const usernameInput = document.getElementById("username-input");
 const joinBtn = document.getElementById("join-btn");
+const settingsNameInput = document.getElementById("settings-name-input");
 const myNameEl = document.getElementById("my-name");
 const myIdEl = document.getElementById("my-id");
 const myAvatar = document.getElementById("my-avatar");
@@ -109,17 +111,15 @@ function playNotificationSound() {
 
 // ========== Login ==========
 joinBtn.addEventListener("click", startApp);
-usernameInput.addEventListener("keydown", e => { if (e.key === "Enter") startApp(); });
 
 function startApp() {
-  myName = usernameInput.value.trim() || localStorage.getItem("saimasiya_name") || "Anonymous";
-  if (!myName) return;
+  myName = localStorage.getItem("saimasiya_name") || "Anonymous";
   localStorage.setItem("saimasiya_name", myName);
   applySettings();
   loginScreen.classList.add("hidden");
   app.classList.remove("hidden");
   myNameEl.textContent = myName;
-  myAvatar.textContent = getInitial(myName);
+  setAvatar(myAvatar, myName, myPicture);
 
   peer = new Peer({
     debug: 1,
@@ -190,7 +190,7 @@ function setupDataConnection(conn, displayName) {
   conn.on("open", () => {
     if (!connections[peerId] || connections[peerId].conn !== conn) return;
     connections[peerId].connecting = false;
-    conn.send({ type: "hello", name: myName, memberId: myMemberId });
+    conn.send({ type: "hello", name: myName, memberId: myMemberId, picture: myPicture });
     if (myStatus && myStatus.expires > Date.now()) {
       conn.send({ type: "status", status: myStatus });
     }
@@ -239,9 +239,18 @@ function handleData(peerId, data) {
   }
   else if (data.type === "hello") {
     const savedFriend = friends.find(friend => friend.peerId === peerId);
+    const remotePicture = isValidAvatar(data.picture) ? data.picture : "";
     chat.name = savedFriend && savedFriend.customName ? savedFriend.name : (data.name || peerId);
-    chat.picture = savedFriend && savedFriend.picture || "";
+    chat.picture = savedFriend && (savedFriend.customPicture || (savedFriend.customName && savedFriend.picture))
+      ? savedFriend.picture
+      : remotePicture;
     addFriend(peerId, chat.name, data.memberId);
+    const friend = friends.find(item => item.peerId === peerId);
+    if (friend) {
+      friend.remotePicture = remotePicture;
+      saveFriends();
+      renderFriendsList();
+    }
     updateGroupMemberRoute(peerId, data.memberId, data.name);
     renderChatList();
     renderFriendsList();
@@ -581,7 +590,9 @@ function saveCurrentGroup() {
       friend.name = chat.name;
       friend.picture = chat.picture;
       friend.customName = true;
+      friend.customPicture = !!chat.picture;
       saveFriends();
+      renderFriendsList();
     }
     document.getElementById("edit-chat-modal").classList.add("hidden");
     switchToChat(activePeerId);
@@ -710,6 +721,9 @@ if (rejectCallBtn) rejectCallBtn.addEventListener("click", rejectIncomingCall);
 
 async function getLocalStream(video = false) {
   try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error("Camera and microphone access is unavailable. Use HTTPS or localhost in a supported browser.");
+    }
     if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
     mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: true,
@@ -717,19 +731,26 @@ async function getLocalStream(video = false) {
     });
     return mediaStream;
   } catch (err) {
-    alert(video ? "Camera/Mic access denied" : "Microphone access denied");
+    alert(err.message && err.message.startsWith("Camera and microphone access")
+      ? err.message
+      : (video ? "Camera/microphone access is unavailable. Check browser permissions and try again." : "Microphone access is unavailable. Check browser permissions and try again."));
     throw err;
   }
 }
 
 async function startCall(video = false) {
   if (!activePeerId || currentCall) return;
+  if (!peer || peer.destroyed) { alert("Your connection is not ready yet. Please try again."); return; }
+  if (!connections[activePeerId] || !connections[activePeerId].conn.open) { alert("Connect to this friend before starting a call."); return; }
   isVideoCall = video;
+  let mediaReady = false;
   try {
     const stream = await getLocalStream(video);
+    mediaReady = true;
     currentCall = peer.call(activePeerId, stream, { metadata: { video, name: myName } });
+    if (!currentCall) throw new Error("The call could not be created.");
     const chat = connections[activePeerId];
-    showCallUI(chat ? chat.name : activePeerId, video ? "Video calling…" : "Calling…", video);
+    showCallUI(chat ? chat.name : activePeerId, video ? "Video calling…" : "Calling…", video, activePeerId);
     if (video && localVideo) { localVideo.srcObject = stream; localVideo.classList.remove("hidden"); }
     currentCall.on("stream", remoteStream => {
       playRemoteStream(remoteStream, video);
@@ -738,7 +759,11 @@ async function startCall(video = false) {
     });
     currentCall.on("close", endCallCleanup);
     currentCall.on("error", () => endCallCleanup());
-  } catch (e) { console.error(e); }
+  } catch (e) {
+    console.error("Could not start call", e);
+    endCallCleanup();
+    if (mediaReady) alert("Could not start the call. Check your connection and try again.");
+  }
 }
 
 function handleIncomingCall(call) {
@@ -748,7 +773,8 @@ function handleIncomingCall(call) {
   const peerId = call.peer;
   const name = connections[peerId] ? connections[peerId].name : (meta.name || peerId);
   incomingName.textContent = name;
-  incomingAvatar.textContent = getInitial(name);
+  const friend = friends.find(item => item.peerId === peerId);
+  setAvatar(incomingAvatar, name, friend && (friend.picture || friend.remotePicture));
   if (incomingType) incomingType.textContent = isVideoCall ? "Video call…" : "Voice call…";
   incomingCall.classList.remove("hidden");
   playNotificationSound();
@@ -764,12 +790,19 @@ async function acceptIncomingCall() {
     pendingCall = null;
     const peerId = currentCall.peer;
     const name = connections[peerId] ? connections[peerId].name : peerId;
-    showCallUI(name, "Connected", isVideoCall);
-    startCallTimer();
+    showCallUI(name, "Connecting…", isVideoCall, peerId);
     if (isVideoCall && localVideo) { localVideo.srcObject = stream; localVideo.classList.remove("hidden"); }
-    currentCall.on("stream", s => playRemoteStream(s, isVideoCall));
+    currentCall.on("stream", s => {
+      playRemoteStream(s, isVideoCall);
+      callStatus.textContent = "Connected";
+      startCallTimer();
+    });
     currentCall.on("close", endCallCleanup);
-  } catch (e) { rejectIncomingCall(); }
+    currentCall.on("error", () => endCallCleanup());
+  } catch (e) {
+    console.error("Could not answer call", e);
+    rejectIncomingCall();
+  }
 }
 
 function rejectIncomingCall() {
@@ -777,9 +810,11 @@ function rejectIncomingCall() {
   incomingCall.classList.add("hidden");
 }
 
-function showCallUI(name, status, video) {
+function showCallUI(name, status, video, peerId) {
   callName.textContent = name;
-  callAvatar.textContent = getInitial(name);
+  const chat = peerId && connections[peerId];
+  const friend = peerId && friends.find(item => item.peerId === peerId);
+  setAvatar(callAvatar, name, chat && chat.picture || friend && (friend.picture || friend.remotePicture));
   callStatus.textContent = status;
   callTimer.textContent = "00:00";
   callOverlay.classList.remove("hidden");
@@ -835,8 +870,9 @@ function endCallCleanup() {
   currentCall = null; isVideoCall = false;
   callOverlay.classList.add("hidden");
   if (hangupBtn) hangupBtn.classList.add("hidden");
-  if (voiceCallBtn) voiceCallBtn.classList.remove("hidden");
-  if (videoCallBtn) videoCallBtn.classList.remove("hidden");
+  const directChatActive = !!activePeerId && !currentGroupId;
+  if (voiceCallBtn) voiceCallBtn.classList.toggle("hidden", !directChatActive);
+  if (videoCallBtn) videoCallBtn.classList.toggle("hidden", !directChatActive);
   if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
   if (remoteVideo) remoteVideo.srcObject = null;
   if (localVideo) localVideo.srcObject = null;
@@ -993,6 +1029,16 @@ if (document.getElementById("group-picture-input")) document.getElementById("gro
 if (document.getElementById("edit-group-picture-input")) document.getElementById("edit-group-picture-input").addEventListener("change", event => readGroupPicture(event.target.files[0], "edit-group-picture-preview", value => editGroupPictureData = value));
 if (document.getElementById("save-settings-btn")) document.getElementById("save-settings-btn").addEventListener("click", saveSettings);
 if (document.getElementById("cancel-settings-btn")) document.getElementById("cancel-settings-btn").addEventListener("click", () => document.getElementById("settings-modal").classList.add("hidden"));
+if (settingsNameInput) settingsNameInput.addEventListener("input", () => {
+  const name = settingsNameInput.value.trim();
+  if (name) localStorage.setItem("saimasiya_name", name.slice(0, 20));
+});
+if (document.getElementById("settings-picture-input")) document.getElementById("settings-picture-input").addEventListener("change", event => readGroupPicture(event.target.files[0], "settings-picture-preview", value => profilePictureDraft = value));
+if (document.getElementById("remove-profile-picture-btn")) document.getElementById("remove-profile-picture-btn").addEventListener("click", () => {
+  profilePictureDraft = "";
+  document.getElementById("settings-picture-preview").innerHTML = "";
+  document.getElementById("settings-picture-input").value = "";
+});
 
 if (backBtn) backBtn.addEventListener("click", () => {
   chatView.classList.add("hidden");
@@ -1047,12 +1093,17 @@ function saveGroups() {
 function loadSettings() {
   try {
     const settings = JSON.parse(localStorage.getItem("saimasiya_settings") || "{}");
+    const colors = { green: "#00a884", blue: "#4c9aff", purple: "#b388ff" };
+    const theme = ["green", "blue", "purple"].includes(settings.theme) ? settings.theme : "green";
     return {
-      theme: ["green", "blue", "purple"].includes(settings.theme) ? settings.theme : "green",
+      theme,
+      color: /^#[0-9a-f]{6}$/i.test(settings.color) ? settings.color : colors[theme],
+      mode: settings.mode === "light" ? "light" : "dark",
+      picture: isValidAvatar(settings.picture) ? settings.picture : "",
       sounds: settings.sounds !== false
     };
   } catch {
-    return { theme: "green", sounds: true };
+    return { theme: "green", color: "#00a884", mode: "dark", picture: "", sounds: true };
   }
 }
 
@@ -1072,14 +1123,21 @@ function applySettings() {
     purple: { accent: "#b388ff", bubble: "#553584" }
   };
   const theme = themes[appSettings.theme] || themes.green;
-  document.documentElement.style.setProperty("--accent", theme.accent);
-  document.documentElement.style.setProperty("--bubble-out", theme.bubble);
-  document.querySelector('meta[name="theme-color"]').content = theme.accent;
+  const color = /^#[0-9a-f]{6}$/i.test(appSettings.color) ? appSettings.color : theme.accent;
+  const rgb = [1, 3, 5].map(index => Math.round(parseInt(color.slice(index, index + 2), 16) * 0.45));
+  const bubble = "#" + rgb.map(channel => channel.toString(16).padStart(2, "0")).join("");
+  document.documentElement.dataset.mode = appSettings.mode === "light" ? "light" : "dark";
+  document.documentElement.style.setProperty("--accent", color);
+  document.documentElement.style.setProperty("--bubble-out", bubble);
+  document.querySelector('meta[name="theme-color"]').content = color;
 }
 
 function openSettings() {
   document.getElementById("settings-name-input").value = myName || localStorage.getItem("saimasiya_name") || "";
-  document.getElementById("settings-theme-input").value = appSettings.theme;
+  profilePictureDraft = myPicture;
+  document.getElementById("settings-color-input").value = appSettings.color;
+  document.getElementById("settings-mode-input").value = appSettings.mode;
+  document.getElementById("settings-picture-preview").innerHTML = myPicture ? `<img src="${myPicture}" alt="Profile picture preview">` : "";
   document.getElementById("settings-sounds-input").checked = appSettings.sounds;
   document.getElementById("settings-modal").classList.remove("hidden");
 }
@@ -1089,18 +1147,21 @@ function saveSettings() {
   if (!name) { alert("Enter your display name."); return; }
   myName = name.slice(0, 20);
   appSettings = {
-    theme: document.getElementById("settings-theme-input").value,
+    theme: appSettings.theme,
+    color: document.getElementById("settings-color-input").value,
+    mode: document.getElementById("settings-mode-input").value,
+    picture: profilePictureDraft,
     sounds: document.getElementById("settings-sounds-input").checked
   };
+  myPicture = profilePictureDraft;
   localStorage.setItem("saimasiya_name", myName);
   localStorage.setItem("saimasiya_settings", JSON.stringify(appSettings));
   applySettings();
-  usernameInput.value = myName;
   myNameEl.textContent = myName;
-  myAvatar.textContent = getInitial(myName);
+  setAvatar(myAvatar, myName, myPicture);
   if (peer) {
     Object.values(connections).forEach(chat => {
-      if (chat.conn.open) chat.conn.send({ type: "hello", name: myName, memberId: myMemberId });
+      if (chat.conn.open) chat.conn.send({ type: "hello", name: myName, memberId: myMemberId, picture: myPicture });
     });
     Object.values(groups).forEach(group => {
       const self = group.members.find(member => member.memberId === myMemberId || member.peerId === myId);
@@ -1165,7 +1226,7 @@ function renderFriendsList() {
     item.className = "chat-item";
     const avatar = document.createElement("div");
     avatar.className = "avatar small";
-    setAvatar(avatar, f.name, f.picture);
+    setAvatar(avatar, f.name, f.picture || f.remotePicture);
     const dot = document.createElement("span");
     dot.className = isOnline ? "online-dot" : "offline-dot";
     const info = document.createElement("div");
@@ -1211,3 +1272,5 @@ function loadChatHistory(peerId) {
     return [];
   }
 }
+
+applySettings();
