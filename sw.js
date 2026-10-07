@@ -1,4 +1,4 @@
-const CACHE_NAME = "saima-siya-v5";
+const CACHE_NAME = "saima-siya-v6";
 const ASSETS = [
   "./",
   "./index.html",

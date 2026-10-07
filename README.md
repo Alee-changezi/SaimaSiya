@@ -15,6 +15,7 @@ Advanced peer-to-peer messaging app.
 - **Friends list** (saved on your device)
 - One-click reconnect to friends
 - Online / Offline status
+- QR codes for sharing and scanning Peer IDs
 - Chat history (saved locally)
 - Typing indicators & read receipts
 - Installable on phone (PWA)
@@ -37,6 +38,8 @@ Open http://localhost:3000
 3. Click **Add & Connect**
 4. They are saved in your Friends list
 5. Next time just click them to reconnect
+
+You can also use the QR button beside your Peer ID to show a scannable code. On a phone, choose **Scan QR** to scan a friend's code and connect without typing. Camera scanning requires HTTPS (the live app already uses it) and camera permission; manual Peer ID entry remains available.
 
 ## Group chats and settings
 

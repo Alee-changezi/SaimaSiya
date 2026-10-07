@@ -34,6 +34,7 @@ const myNameEl = document.getElementById("my-name");
 const myIdEl = document.getElementById("my-id");
 const myAvatar = document.getElementById("my-avatar");
 const copyIdBtn = document.getElementById("copy-id-btn");
+const showQrBtn = document.getElementById("show-qr-btn");
 const remoteIdInput = document.getElementById("remote-id-input");
 const connectBtn = document.getElementById("connect-btn");
 const chatList = document.getElementById("chat-list");
@@ -75,6 +76,8 @@ const groupList = document.getElementById("group-list");
 const settingsBtn = document.getElementById("settings-btn");
 const newGroupBtn = document.getElementById("new-group-btn");
 const editChatBtn = document.getElementById("edit-chat-btn");
+let qrScanner = null;
+let qrScanHandled = false;
 
 // ========== Helpers ==========
 function getInitial(name) { return (name || "?").charAt(0).toUpperCase(); }
@@ -1012,6 +1015,85 @@ if (copyIdBtn) copyIdBtn.addEventListener("click", () => {
     setTimeout(() => copyIdBtn.textContent = "📋", 1500);
   });
 });
+
+if (showQrBtn) showQrBtn.addEventListener("click", showMyQrCode);
+if (document.getElementById("close-my-qr-btn")) document.getElementById("close-my-qr-btn").addEventListener("click", () => {
+  document.getElementById("my-qr-modal").classList.add("hidden");
+});
+if (document.getElementById("scan-qr-btn")) document.getElementById("scan-qr-btn").addEventListener("click", startQrScanner);
+if (document.getElementById("close-scan-qr-btn")) document.getElementById("close-scan-qr-btn").addEventListener("click", stopQrScanner);
+
+function showMyQrCode() {
+  if (!myId) { alert("Wait for your Peer ID to connect, then try again."); return; }
+  const qrContainer = document.getElementById("my-qr-code");
+  qrContainer.innerHTML = "";
+  document.getElementById("my-qr-peer-id").textContent = myId;
+  document.getElementById("my-qr-modal").classList.remove("hidden");
+  if (typeof QRCode !== "function") {
+    qrContainer.textContent = "QR code library failed to load. You can still share the Peer ID shown above.";
+    return;
+  }
+  new QRCode(qrContainer, {
+    text: myId,
+    width: 240,
+    height: 240,
+    colorDark: "#111b21",
+    colorLight: "#ffffff",
+    correctLevel: QRCode.CorrectLevel.M
+  });
+}
+
+async function startQrScanner() {
+  if (typeof Html5Qrcode !== "function") {
+    alert("The QR scanner could not load. You can still enter a Peer ID manually.");
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    alert("QR scanning requires camera access. Open the app over HTTPS or localhost in a supported browser.");
+    return;
+  }
+  qrScanHandled = false;
+  document.getElementById("qr-scan-status").textContent = "Point your camera at a friend's Peer ID QR code.";
+  document.getElementById("scan-qr-modal").classList.remove("hidden");
+  qrScanner = new Html5Qrcode("qr-reader");
+  try {
+    await qrScanner.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 240, height: 240 } },
+      handleScannedPeerId,
+      () => {}
+    );
+  } catch (error) {
+    console.error("Could not start QR scanner", error);
+    document.getElementById("qr-scan-status").textContent = "Camera access failed. Allow camera permission and try again, or enter the ID manually.";
+  }
+}
+
+async function handleScannedPeerId(decodedText) {
+  if (qrScanHandled) return;
+  const peerId = decodedText.trim();
+  if (!peerId || peerId.length > 200 || peerId === myId || /\s/.test(peerId)) {
+    document.getElementById("qr-scan-status").textContent = "That QR code does not contain a valid Peer ID. Try another code.";
+    return;
+  }
+  qrScanHandled = true;
+  remoteIdInput.value = peerId;
+  await stopQrScanner();
+  connectBtn.click();
+}
+
+async function stopQrScanner() {
+  document.getElementById("scan-qr-modal").classList.add("hidden");
+  if (!qrScanner) return;
+  const scanner = qrScanner;
+  qrScanner = null;
+  try {
+    if (scanner.isScanning) await scanner.stop();
+    scanner.clear();
+  } catch (error) {
+    console.error("Could not stop QR scanner", error);
+  }
+}
 
 if (logoutBtn) logoutBtn.addEventListener("click", () => {
   if (peer) peer.destroy();
